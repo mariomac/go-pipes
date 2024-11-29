@@ -1,6 +1,6 @@
 # Tutorial: Minigrep
 
-Source code: [./minigrep](./minigrep)
+Source code: [./minigrep]()
 
 To learn the basics of the [Pipes](https://github.com/mariomac/pipes) library, w
 we will create our own [`grep`-like](https://en.wikipedia.org/wiki/Grep) command-line
