@@ -25,20 +25,23 @@ func measurer(numSamples int) func(out chan<- Measure) {
 	}
 }
 
-// sums the values of the measures within the same second
-// and forwards them as a single added measure for that second
-func summarizer(in <-chan Measure, out chan<- Measure) {
+func averager(in <-chan Measure, out chan<- Measure) {
 	currentSeconds := time.Now().Unix()
-	sum := float64(0)
+	var sum, count float64 = 0, 0
 	for measure := range in {
 		if measure.Timestamp.Unix() != currentSeconds {
-			out <- Measure{time.Unix(currentSeconds, 0), sum}
+			if count != 0 {
+				out <- Measure{time.Unix(currentSeconds, 0), sum / count}
+			}
 			currentSeconds++
-			sum = 0
+			sum, count = 0, 0
 		}
 		sum += measure.Value
+		count++
 	}
-	out <- Measure{time.Unix(currentSeconds, 0), sum}
+	if count != 0 {
+		out <- Measure{time.Unix(currentSeconds, 0), sum / count}
+	}
 }
 
 func logger(in <-chan Measure) {
@@ -48,40 +51,40 @@ func logger(in <-chan Measure) {
 }
 
 func runManualPipeline() {
-	ch1 := make(chan Measure)
-	ch2 := make(chan Measure)
+	measureOut := make(chan Measure)
+	averageOut := make(chan Measure)
 	go func() {
-		measurer(numSamples)(ch1)
-		close(ch1)
+		measurer(numSamples)(measureOut)
+		close(measureOut)
 	}()
 	go func() {
-		summarizer(ch1, ch2)
-		close(ch2)
+		averager(measureOut, averageOut)
+		close(averageOut)
 	}()
-	logger(ch2)
+	logger(averageOut)
 }
 
 type Pipeline struct {
-	measurer   pipe.Start[Measure]
-	summarizer pipe.Middle[Measure, Measure]
-	logger     pipe.Final[Measure]
+	measurer pipe.Start[Measure]
+	averager pipe.Middle[Measure, Measure]
+	logger   pipe.Final[Measure]
 }
 
-func (p *Pipeline) Ranger() *pipe.Start[Measure]           { return &p.measurer }
-func (p *Pipeline) Filter() *pipe.Middle[Measure, Measure] { return &p.summarizer }
-func (p *Pipeline) Printer() *pipe.Final[Measure]          { return &p.logger }
+func (p *Pipeline) Measurer() *pipe.Start[Measure]           { return &p.measurer }
+func (p *Pipeline) Averager() *pipe.Middle[Measure, Measure] { return &p.averager }
+func (p *Pipeline) Logger() *pipe.Final[Measure]             { return &p.logger }
 
 func (p *Pipeline) Connect() {
-	p.measurer.SendTo(p.summarizer)
-	p.summarizer.SendTo(p.logger)
+	p.measurer.SendTo(p.averager)
+	p.averager.SendTo(p.logger)
 }
 
 func runAutoPipe() {
 	// builder and register nodes
 	builder := pipe.NewBuilder(&Pipeline{})
-	pipe.AddStart(builder, (*Pipeline).Ranger, measurer(numSamples))
-	pipe.AddMiddle(builder, (*Pipeline).Filter, summarizer)
-	pipe.AddFinal(builder, (*Pipeline).Printer, logger)
+	pipe.AddStart(builder, (*Pipeline).Measurer, measurer(numSamples))
+	pipe.AddMiddle(builder, (*Pipeline).Averager, averager)
+	pipe.AddFinal(builder, (*Pipeline).Logger, logger)
 	run, _ := builder.Build()
 	run.Start()
 	<-run.Done()
